@@ -1,10 +1,17 @@
 <template>
-  <div class="game-wrapper">
-    <h1>🐍 Snake Game</h1>
+  <div class="game-wrapper" :class="theme">
+    <header>
+      <h1>🐍 Snake Game</h1>
 
-    <div class="score">
-      Score: <strong>{{ score }}</strong>
-    </div>
+      <div class="scores">
+        <span>Score: <strong>{{ score }}</strong></span>
+        <span>High: <strong>{{ highScore }}</strong></span>
+      </div>
+
+      <button class="theme-btn" @click="toggleTheme">
+        {{ theme === 'neon' ? '🌙 Dark' : '✨ Neon' }}
+      </button>
+    </header>
 
     <canvas
       ref="canvas"
@@ -13,13 +20,13 @@
     ></canvas>
 
     <p class="hint">
-      Use ↑ ↓ ← → ou W A S D — pressione ESPAÇO para reiniciar
+      ↑ ↓ ← → / WASD — Mobile: arraste — Espaço reinicia
     </p>
 
     <div v-if="gameOver" class="overlay">
       <div class="game-over">
         <h2>💀 Game Over</h2>
-        <p>Score final: {{ score }}</p>
+        <p>Score: {{ score }}</p>
         <button @click="resetGame">Jogar novamente</button>
       </div>
     </div>
@@ -27,29 +34,36 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 
 /* CONFIG */
 const canvasSize = 400
 const tileSize = 20
 const tiles = canvasSize / tileSize
-const speed = 120
+const baseSpeed = 140
+const minSpeed = 60
 
+/* REFS */
 const canvas = ref(null)
-let ctx = null
-let loop = null
+let ctx
+let loop
 
-/* ESTADO */
+/* STATE */
 const score = ref(0)
+const highScore = ref(
+  Number(localStorage.getItem('snake-highscore')) || 0
+)
 const gameOver = ref(false)
+const theme = ref('neon')
 
+let speed = baseSpeed
 let snake = []
 let food = {}
 let direction = { x: 1, y: 0 }
 let nextDirection = { x: 1, y: 0 }
 
-/* FUNÇÕES */
-function randomPosition() {
+/* HELPERS */
+function randomPos() {
   return {
     x: Math.floor(Math.random() * tiles),
     y: Math.floor(Math.random() * tiles)
@@ -57,9 +71,10 @@ function randomPosition() {
 }
 
 function spawnFood() {
-  food = randomPosition()
+  food = randomPos()
 }
 
+/* GAME */
 function resetGame() {
   snake = [
     { x: 10, y: 10 },
@@ -69,6 +84,7 @@ function resetGame() {
   direction = { x: 1, y: 0 }
   nextDirection = { x: 1, y: 0 }
   score.value = 0
+  speed = baseSpeed
   gameOver.value = false
   spawnFood()
 
@@ -76,18 +92,67 @@ function resetGame() {
   loop = setInterval(gameLoop, speed)
 }
 
-/* DESENHO */
+function collision(head) {
+  if (
+    head.x < 0 ||
+    head.y < 0 ||
+    head.x >= tiles ||
+    head.y >= tiles
+  )
+    return true
+
+  return snake.some(
+    (p) => p.x === head.x && p.y === head.y
+  )
+}
+
+function update() {
+  if (gameOver.value) return
+
+  direction = nextDirection
+  const head = {
+    x: snake[0].x + direction.x,
+    y: snake[0].y + direction.y
+  }
+
+  if (collision(head)) {
+    gameOver.value = true
+    clearInterval(loop)
+    return
+  }
+
+  snake.unshift(head)
+
+  if (head.x === food.x && head.y === food.y) {
+    score.value++
+    spawnFood()
+
+    speed = Math.max(minSpeed, baseSpeed - score.value * 5)
+    clearInterval(loop)
+    loop = setInterval(gameLoop, speed)
+  } else {
+    snake.pop()
+  }
+}
+
+/* DRAW */
 function drawBackground() {
-  ctx.fillStyle = '#111'
+  ctx.fillStyle = theme.value === 'neon' ? '#050505' : '#111'
   ctx.fillRect(0, 0, canvasSize, canvasSize)
 }
 
 function drawSnake() {
-  snake.forEach((part, index) => {
-    ctx.fillStyle = index === 0 ? '#00ff9c' : '#00cc7a'
+  snake.forEach((p, i) => {
+    ctx.fillStyle =
+      i === 0
+        ? theme.value === 'neon'
+          ? '#00fff7'
+          : '#00ff9c'
+        : '#00cc7a'
+
     ctx.fillRect(
-      part.x * tileSize,
-      part.y * tileSize,
+      p.x * tileSize,
+      p.y * tileSize,
       tileSize,
       tileSize
     )
@@ -104,51 +169,6 @@ function drawFood() {
   )
 }
 
-/* LÓGICA */
-function checkCollision(head) {
-  // parede
-  if (
-    head.x < 0 ||
-    head.y < 0 ||
-    head.x >= tiles ||
-    head.y >= tiles
-  ) {
-    return true
-  }
-
-  // corpo
-  return snake.some(
-    (part) => part.x === head.x && part.y === head.y
-  )
-}
-
-function update() {
-  if (gameOver.value) return
-
-  direction = nextDirection
-
-  const head = {
-    x: snake[0].x + direction.x,
-    y: snake[0].y + direction.y
-  }
-
-  if (checkCollision(head)) {
-    gameOver.value = true
-    clearInterval(loop)
-    return
-  }
-
-  snake.unshift(head)
-
-  // comeu comida
-  if (head.x === food.x && head.y === food.y) {
-    score.value++
-    spawnFood()
-  } else {
-    snake.pop()
-  }
-}
-
 function gameLoop() {
   drawBackground()
   update()
@@ -156,58 +176,112 @@ function gameLoop() {
   drawSnake()
 }
 
-/* CONTROLES */
+/* INPUT */
 function handleKey(e) {
-  const key = e.key.toLowerCase()
+  const k = e.key.toLowerCase()
 
-  if (key === ' ' && gameOver.value) {
-    resetGame()
-  }
+  if (k === ' ' && gameOver.value) resetGame()
 
-  if ((key === 'arrowup' || key === 'w') && direction.y !== 1)
+  if ((k === 'arrowup' || k === 'w') && direction.y !== 1)
     nextDirection = { x: 0, y: -1 }
-
-  if ((key === 'arrowdown' || key === 's') && direction.y !== -1)
+  if ((k === 'arrowdown' || k === 's') && direction.y !== -1)
     nextDirection = { x: 0, y: 1 }
-
-  if ((key === 'arrowleft' || key === 'a') && direction.x !== 1)
+  if ((k === 'arrowleft' || k === 'a') && direction.x !== 1)
     nextDirection = { x: -1, y: 0 }
-
-  if ((key === 'arrowright' || key === 'd') && direction.x !== -1)
+  if ((k === 'arrowright' || k === 'd') && direction.x !== -1)
     nextDirection = { x: 1, y: 0 }
 }
 
+/* MOBILE SWIPE */
+let startX = 0
+let startY = 0
+
+function touchStart(e) {
+  startX = e.touches[0].clientX
+  startY = e.touches[0].clientY
+}
+
+function touchEnd(e) {
+  const dx = e.changedTouches[0].clientX - startX
+  const dy = e.changedTouches[0].clientY - startY
+
+  if (Math.abs(dx) > Math.abs(dy)) {
+    if (dx > 0 && direction.x !== -1) nextDirection = { x: 1, y: 0 }
+    if (dx < 0 && direction.x !== 1) nextDirection = { x: -1, y: 0 }
+  } else {
+    if (dy > 0 && direction.y !== -1) nextDirection = { x: 0, y: 1 }
+    if (dy < 0 && direction.y !== 1) nextDirection = { x: 0, y: -1 }
+  }
+}
+
+/* WATCHERS */
+watch(score, (v) => {
+  if (v > highScore.value) {
+    highScore.value = v
+    localStorage.setItem('snake-highscore', v)
+  }
+})
+
+function toggleTheme() {
+  theme.value = theme.value === 'neon' ? 'dark' : 'neon'
+}
+
+/* INIT */
 onMounted(() => {
   ctx = canvas.value.getContext('2d')
   window.addEventListener('keydown', handleKey)
+  canvas.value.addEventListener('touchstart', touchStart)
+  canvas.value.addEventListener('touchend', touchEnd)
   resetGame()
 })
 </script>
 
 <style scoped>
 .game-wrapper {
-  background: rgba(0, 0, 0, 0.45);
-  padding: 30px 40px;
-  border-radius: 20px;
+  padding: 25px 30px;
+  border-radius: 22px;
   text-align: center;
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
   position: relative;
+  width: 460px;
 }
 
-.score {
+.neon {
+  background: rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 40px #00fff755;
+}
+
+.dark {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+header {
   margin-bottom: 10px;
-  font-size: 1.1rem;
+}
+
+.scores {
+  display: flex;
+  justify-content: space-between;
+  margin: 10px 0;
 }
 
 canvas {
-  background: #111;
-  border-radius: 12px;
-  border: 2px solid #00ff9c;
+  border-radius: 14px;
+  border: 2px solid #00fff7;
+  touch-action: none;
+}
+
+.theme-btn {
+  margin-top: 5px;
+  padding: 6px 14px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
 }
 
 .hint {
-  margin-top: 12px;
-  font-size: 0.85rem;
+  margin-top: 8px;
+  font-size: 0.8rem;
   opacity: 0.7;
 }
 
@@ -215,35 +289,17 @@ canvas {
 .overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.75);
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 22px;
 }
 
 .game-over {
   background: #111;
-  padding: 30px 40px;
+  padding: 30px;
   border-radius: 16px;
   border: 2px solid #ff4757;
-}
-
-.game-over h2 {
-  margin-bottom: 10px;
-}
-
-button {
-  margin-top: 15px;
-  padding: 10px 20px;
-  background: #00ff9c;
-  border: none;
-  border-radius: 10px;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-button:hover {
-  opacity: 0.9;
 }
 </style>
